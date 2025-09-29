@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
 _PREPROCESSOR_ABBREVIATIONS = {
@@ -208,6 +208,23 @@ def plot_bar_comparison(
     plt.close()
 
 
+_METRIC_LABELS = {
+    "r2": "$R^2$",
+    "rmse": "RMSE",
+    "mse": "MSE",
+    "mae": "MAE",
+    "accuracy": "Accuracy",
+    "precision_macro": "Precision (macro)",
+    "recall_macro": "Recall (macro)",
+    "f1_macro": "F1 (macro)",
+    "roc_auc_ovr": "ROC AUC (OvR)",
+}
+
+
+def _format_metric_label(metric: str) -> str:
+    return _METRIC_LABELS.get(metric, metric.upper())
+
+
 def plot_predicted_vs_actual(
     pipeline: Pipeline,
     X: np.ndarray | pd.DataFrame,
@@ -216,6 +233,7 @@ def plot_predicted_vs_actual(
     title: Optional[str] = None,
     predictions: Optional[np.ndarray] = None,
     r2_override: Optional[float] = None,
+    metric_scores: Optional[Mapping[str, float]] = None,
 ) -> None:
     """Plot predicted vs. actual values for regression models.
 
@@ -236,6 +254,10 @@ def plot_predicted_vs_actual(
         Path where the plot PNG will be saved.
     title : str, optional
         Custom title for the plot.
+    metric_scores : Mapping[str, float], optional
+        Pre-computed metric values (e.g., from cross-validation). When
+        provided, these metrics are displayed in the annotation box so they
+        match other summary figures such as ``top_*.png`` outputs.
     """
     y_true = np.asarray(y)
     if predictions is None:
@@ -246,14 +268,50 @@ def plot_predicted_vs_actual(
         y_pred = np.asarray(predictions)
     if y_pred.shape[0] != y_true.shape[0]:
         raise ValueError("Predictions and targets must have the same length for plotting")
-    # Compute R^2 score
+    # Determine metrics to display so charts align with summary tables
+    metrics_display: dict[str, float] = {}
+    if metric_scores:
+        for key, value in metric_scores.items():
+            if value is None:
+                continue
+            try:
+                value_float = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(value_float):
+                continue
+            metrics_display[key] = value_float
+
+    computed_r2: Optional[float]
     if r2_override is not None:
-        r2 = r2_override
+        computed_r2 = r2_override
     else:
         try:
-            r2 = r2_score(y_true, y_pred)
+            computed_r2 = float(r2_score(y_true, y_pred))
         except Exception:
-            r2 = pipeline.score(X, y) if pipeline is not None else float("nan")
+            computed_r2 = None
+            try:
+                computed_r2 = float(pipeline.score(X, y)) if pipeline is not None else None
+            except Exception:
+                computed_r2 = None
+    if computed_r2 is not None and np.isfinite(computed_r2) and "r2" not in metrics_display:
+        metrics_display["r2"] = computed_r2
+
+    if not metric_scores:
+        # Populate standard regression metrics from predictions when no overrides provided
+        try:
+            mae_val = float(mean_absolute_error(y_true, y_pred))
+            if np.isfinite(mae_val):
+                metrics_display.setdefault("mae", mae_val)
+        except Exception:
+            pass
+        try:
+            mse_val = float(mean_squared_error(y_true, y_pred))
+            if np.isfinite(mse_val):
+                metrics_display.setdefault("mse", mse_val)
+                metrics_display.setdefault("rmse", float(np.sqrt(mse_val)))
+        except Exception:
+            pass
     plt.figure(figsize=(6, 6))
     plt.scatter(y_true, y_pred, alpha=0.7, edgecolor="k", facecolor="tab:orange")
     # Identity line
@@ -263,16 +321,35 @@ def plot_predicted_vs_actual(
     plt.xlabel("Actual")
     plt.ylabel("Predicted")
     plt.title(title or "Predicted vs. Actual")
-    # Annotate R^2
-    plt.text(
-        0.05,
-        0.95,
-        f"$R^2$ = {r2:.3f}",
-        transform=plt.gca().transAxes,
-        verticalalignment="top",
-        fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="gray", alpha=0.8),
-    )
+    if metrics_display:
+        preferred_order = [
+            "r2",
+            "rmse",
+            "mse",
+            "mae",
+            "accuracy",
+            "precision_macro",
+            "recall_macro",
+            "f1_macro",
+            "roc_auc_ovr",
+        ]
+        ordered_keys: List[str] = []
+        for key in preferred_order:
+            if key in metrics_display:
+                ordered_keys.append(key)
+        for key in metrics_display.keys():
+            if key not in ordered_keys:
+                ordered_keys.append(key)
+        lines = [f"{_format_metric_label(key)} = {metrics_display[key]:.3f}" for key in ordered_keys]
+        plt.text(
+            0.05,
+            0.95,
+            "\n".join(lines),
+            transform=plt.gca().transAxes,
+            verticalalignment="top",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="gray", alpha=0.8),
+        )
     plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -538,14 +538,17 @@ def run_automl(config_path: Path) -> None:
         results_df_best = pd.DataFrame(list(best_rows.values()))
     else:
         results_df_best = results_df.copy()
+    metric_columns = [
+        c
+        for c in results_df_best.columns
+        if c not in {"preprocessor", "model", "params", "error"}
+    ]
     # Save filtered results (best per model) to CSV and JSON
     results_path = output_dir / cfg.output.results_csv
     results_df_best.to_csv(results_path, index=False)
     results_df_best.to_json(results_path.with_suffix(".json"), orient="records", indent=2)
     # Generate visualizations if enabled
     if cfg.output.generate_plots:
-        # Determine metric columns for the filtered DataFrame
-        metric_columns = [c for c in results_df_best.columns if c not in {"preprocessor", "model", "params", "error"}]
         # Generate bar charts for each metric using top performers
         for metric in metric_columns:
             plot_path = output_dir / f"top_{metric}.png"
@@ -852,6 +855,15 @@ def run_automl(config_path: Path) -> None:
                     y_pred_for_plots = None
                     residuals_for_plots = None
                     r2_for_plots = None
+        metrics_for_display: Dict[str, float] = {}
+        for metric_name in metric_columns:
+            value = row.get(metric_name)
+            if pd.isna(value):
+                continue
+            try:
+                metrics_for_display[metric_name] = float(value)
+            except (TypeError, ValueError):
+                continue
         # Save pipeline
         # Use model_label for naming; remove spaces and parentheses
         safe_name = f"{model_label.replace(' ', '_').replace('(', '').replace(')', '').replace('+', '_')}_{preproc_name.replace('|', '_')}"
@@ -866,6 +878,7 @@ def run_automl(config_path: Path) -> None:
             if cfg.visualizations.predicted_vs_actual:
                 scatter_path = visual_pred_dir / f"{safe_name}.png"
                 try:
+                    r2_to_use = metrics_for_display.get("r2", r2_for_plots)
                     plot_predicted_vs_actual(
                         pipeline_best,
                         X_train,
@@ -873,7 +886,8 @@ def run_automl(config_path: Path) -> None:
                         scatter_path,
                         title=f"{model_label} ({preproc_name})",
                         predictions=y_pred_for_plots,
-                        r2_override=r2_for_plots,
+                        r2_override=r2_to_use,
+                        metric_scores=metrics_for_display,
                     )
                     if y_pred_for_plots is not None and residuals_for_plots is not None:
                         scatter_df = pd.DataFrame(
