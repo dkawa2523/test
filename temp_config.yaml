@@ -1,0 +1,28 @@
+model_dir: "outputs/train/models"
+models:
+  - name: LightGBM
+    enable: true
+input:
+  mode: "params"
+  variables:
+    - name: age
+      type: int
+      method: range
+      min: 25
+      max: 30
+      step: 1
+    - name: income
+      type: float
+      method: range
+      min: 40000
+      max: 50000
+      step: 1000
+    - name: education
+      type: categorical
+      method: values
+      values: ["Bachelor", "Master"]
+search:
+  method: "tpe"
+  n_trials: 5
+  goal: "max"
+output_dir: "outputs/temp"
