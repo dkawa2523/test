@@ -1,698 +1,343 @@
-以下は、あなたが指定したスタック（RDKit / CREST+xTB / pysisyphus / NWChem / GoodVibes+Arkane+Cantera / 将来ClearML）を**維持**しつつ、先ほどの問題点（barrierless、会合エントロピー、圧力依存、入力SDF品質、ライセンス/差し替え）への対策を織り込み、**「個別タスクとして実行可能」かつ「パイプラインとして一連実行可能」**、さらに**第三者が拡張・修正しやすい**ことを主眼にした、アーキテクト観点の **全体構成＋コード設計の具体案**です。
-
-また、**conda不可**の条件に合わせて、Python側は **pip前提**、xTB/CREST/NWChem等は **外部バイナリ（PATH）前提**で設計します（インストール方法も後述）。
-
----
-
-# 1. 目標と設計原則
-
-## 1.1 ゴール
-
-* 入力：
-
-  * `candidates/*.sdf`（1ファイル=1分子）
-  * `reactants/*.sdf` もしくは `reactants.yaml`（HFや将来の他ガス）
-  * `pipeline.yaml`（手法・条件・予算・並列度など）
-* 出力：
-
-  * 反応候補ごとの **ΔE‡ / ΔG‡（錯体基準・分離基準の両方）**
-  * TS/IRC/QCフラグ
-  * （オプション）GoodVibes/Arkane/Cantera **入力フォーマット**（このコード内で計算する/しないを切替可能）
-
-## 1.2 コード設計の原則（第三者が理解しやすい）
-
-1. **タスク粒度を固定**し、I/O（入力・出力・副産物）を明文化
-2. **データモデルを統一**（JSONスキーマ/Typedモデル）して、ツール差を吸収
-3. **実行は “Task＝サブプロセス単位”** に寄せる（ClearMLパイプラインのローカル実行に合わせる）
-
-   * ClearMLはローカルモードで「ステップがサブプロセス実行」されることが明記されています ([ClearML][1])
-4. **プラグイン方式**（反応テンプレ・PES探索エンジン・DFTエンジン等を差し替え可能）
-5. **キャッシュ／再開（resume）／失敗の資産化**を最初から入れる（MI運用必須）
-
----
-
-# 2. 全体アーキテクチャ（コンポーネントと責務）
-
-## 2.1 レイヤ構造（維持＋強化）
-
-* **Layer A: 構造処理（RDKit）**
-  SDF正規化、フラグメント処理、H付与、ID付与、入力品質フラグ
-* **Layer B: 配座/複合体（CREST + xTB）**
-  配座列挙、遭遇複合体列挙（HF×候補）
-* **Layer C: PES探索（pysisyphus）**
-  NEB/GSM/TS/IRC、barrierless判定、QCフラグ
-
-  * 将来：ASE+Sella+geomeTRICへ差し替え可能にする
-* **Layer D: DFT（NWChem）**
-  TS/周波数/IRC確認（必要時）、出力パース
-
-  * 将来：Psi4、PySCF(+GPU)追加可能
-* **Layer E: 熱化学/速度論（GoodVibes / Arkane / Cantera）**
-  このコードでは **「入力フォーマット変換」中心**
-
-  * GoodVibesは pip で入れられ、出力の整形に有用 ([PyPI][2])
-  * Arkaneは RMG-Py由来で、公式にはDockerが推奨されているため、当面は「入力生成＋外部実行」想定が現実的 ([Reaction Mechanism Generator][3])
-  * Canteraは維持（pipでも入る） ([Cantera][4])
-* **Layer F: 実行管理（将来ClearML）**
-  今はローカルで「ClearMLに移しやすい形」に寄せる
-
----
-
-# 3. リポジトリ構成（理解しやすい “分割” を最優先）
-
-以下のように「**core（共通基盤）**」「**interfaces（抽象）**」「**impl（実装）**」「**tasks（実行単位）**」を分けます。
-
-```text
-gasrxn-pipeline/
-  pyproject.toml
-  README.md
-  docs/
-    architecture.md
-    task_catalog.md
-    data_model.md
-    troubleshooting.md
-  configs/
-    pipeline_hf_amine.yaml
-    tools.yaml
-    reactants.yaml
-  src/gasrxn/
-    __init__.py
-    cli.py                       # gasrxn コマンド
-    core/
-      models/                    # Pydanticで統一データモデル
-        molecule.py
-        conformer.py
-        complex.py
-        reaction.py
-        calc_result.py
-        qc_flags.py
-      io/
-        sdf.py
-        xyz.py
-        json.py
-        hashing.py               # content hash
-      runtime/
-        context.py               # 実行コンテキスト（run_dir, tool paths, etc）
-        tracker.py               # LocalTracker（将来ClearMLTracker差し替え）
-        cache.py                 # キャッシュ層
-        subprocess.py            # 外部コマンド呼び出し共通
-        logging.py
-      plugins/
-        registry.py              # プラグイン登録・発見
-        base.py                  # 反応/エンジンのABC
-    interfaces/
-      standardize.py             # 分子標準化
-      conformer.py               # 配座生成
-      complex.py                 # 複合体生成
-      reaction_template.py       # 反応テンプレ
-      pes.py                     # PES探索
-      dft.py                     # DFT実行
-      export_thermo.py           # GoodVibes入力生成
-      export_arkane.py           # Arkane入力生成
-      export_cantera.py          # Cantera入力生成
-    impl/
-      standardize_rdkit.py
-      conformer_crest_xtb.py
-      complex_xtb_docking.py
-      reaction_hf_proton_transfer.py
-      pes_pysisyphus_xtb.py
-      dft_nwchem.py
-      export_goodvibes.py
-      export_arkane.py
-      export_cantera.py
-      # 将来追加:
-      # pes_ase_sella.py
-      # dft_psi4.py
-      # dft_pyscf.py
-    tasks/
-      base.py                    # Task ABC
-      ingest_dataset.py
-      standardize_dataset.py
-      conformers_generate.py
-      complexes_generate.py
-      reactions_enumerate.py
-      pes_search.py
-      dft_refine.py
-      thermo_export.py
-      arkane_export.py
-      cantera_export.py
-      summarize_rank.py
-    pipeline/
-      dag.py                     # 依存関係解決（DAG）
-      runner.py                  # ローカルパイプライン実行（サブプロセス）
-  tests/
-    test_models.py
-    test_hashing.py
-    test_task_io.py
-```
-
----
-
-# 4. “タスク”の基本仕様（個別実行できるように）
-
-## 4.1 タスクの共通I/O（必須）
-
-各タスクは必ず以下を守ります：
-
-* **入力**：
-
-  * `inputs.json`（参照する上流成果物のパス一覧＋メタ）
-  * `params.json`（このタスクのパラメータ）
-* **出力**：
-
-  * `outputs.json`（成果物パス一覧＋要約メタ）
-  * `metrics.json`（時間、件数、失敗数など）
-  * `qc_flags.jsonl`（個体ごとのQCフラグ）
-  * `logs/`（stdout/stderr、ツールログ）
-
-これを “規約化” すると、第三者が途中成果を見て理解しやすいです。
+以下の方針が最も現実的です。SDFの候補分子をRDKitで読み込み、CREST/xTBで配座とHF会合体を大量生成し、TS候補をNEB/scan/string法で作り、最終的にDFT＋振動解析＋IRCで活性化自由エネルギーを確定する、という多段ワークフローにします。Gaussianと同等精度を狙う場合、重要なのはGaussianそのものではなく、同等の汎関数・基底関数・分散補正・グリッド・熱補正・TS検証条件をそろえることです。
 
-## 4.2 タスクの実行単位（MI効率）
+1. 気相HF反応として定義すべき反応経路
 
-「SDFが多数」の前提なので、タスクは **dataset単位**で実行し、内部で **molecule単位並列**をかけられる設計が効率的です。
+半導体ドライプロセスの文脈では、HF単独よりもHF···添加剤分子の水素結合錯体がHFを分極・弱化し、反応性を高める、という見方が重要です。2026年の第一原理研究でも、H₂O、IPA、アニリン、ピリジン、ジメチルアミン、トリメチルアミンなどの添加剤について、HF···additive錯体が有効なHF活性化種として議論され、N系添加剤はO系よりHF活性化効果が大きい傾向が示されています。 ￼ また、HF/NH₄F混合ガスによるSiO₂エッチング機構をDFTで調べた報告もあり、ガス相HF化学をDFTで扱う先行事例として使えます。 ￼
 
-ただし「個別に実行したい」要求があるので、どのタスクも
+SDF候補分子を M、HFを1分子とすると、まずは次の最小モデルを標準化します。
 
-* `--scope dataset`（全候補を処理）
-* `--scope molecule --id <molecule_id>`（1分子だけ処理）
+R_sep : M(g) + HF(g)
+C_HB  : M···H–F        水素結合錯体
+TS_PT : M···H···F      プロトン移動 / HF活性化の遷移状態
+P_IP  : [MH]+···F−     接触イオン対
 
-の両方を提供します。
+出力すべき活性化量は2種類に分けます。
 
----
+ΔG‡_int = G(TS_PT) − G(C_HB)
 
-# 5. ローカル実行パイプライン設計（ClearML移行しやすい）
+これは会合錯体から見た内部障壁です。HFをどれだけ活性化しやすいかを見る指標になります。
 
-## 5.1 “サブプロセス実行”をデフォルトにする
+ΔG‡_app = G(TS_PT) − {G(M) + G(HF)}
 
-ClearMLのローカルモードは「ステップがサブプロセス実行」されると説明されています ([ClearML][1])。
-したがって、今のローカル実装でも：
+これは分離した気相分子から見た見かけ障壁です。実プロセスの温度・分圧を入れる場合は、各分子の化学ポテンシャル補正、
 
-* パイプラインコントローラ（親プロセス）がDAG順に
-* `gasrxn task run <task_name> ...` を **subprocess** で起動
+G_i(T, p_i) = G_i°(T) + RT ln(p_i / p°)
 
-する方式に寄せると、将来のClearMLパイプライン化が非常にスムーズです。
+を入れて評価します。気相では会合反応の並進エントロピー損失が大きいので、ΔG‡_int と ΔG‡_app は必ず両方出した方がよいです。
 
-## 5.2 CLI設計（第三者が使いやすい）
+アミン系では、強塩基性分子の場合、M···HF → [MH]+···F− が実質的にバリアレスになることがあります。その場合は、無理にTSを探すのではなく、会合自由エネルギー、HF結合長の伸長、HF伸縮振動数の赤方シフト、F/Hの電荷、生成イオン対の安定性をランキング指標にします。
 
-例：
+⸻
 
-```bash
-# データセット登録＋標準化（全件）
-gasrxn task run ingest_dataset   --config pipeline.yaml
-gasrxn task run standardize      --config pipeline.yaml
+2. SDF複数候補を前提にした自動計算フロー
 
-# 配座生成（特定分子だけ）
-gasrxn task run conformers_generate --config pipeline.yaml --scope molecule --id MOL_000123
+全体像
 
-# パイプライン一括
-gasrxn pipeline run --config pipeline.yaml --resume
-```
+candidates.sdf
+  ↓
+RDKit: 構造読込、H付加、電荷・スピン確認、受容原子N/O/F/Sなどの抽出
+  ↓
+CREST/xTB: 候補分子Mの配座探索
+  ↓
+HF配置生成: 各配座・各受容原子に対して M···HF 初期構造を複数生成
+  ↓
+xTBまたはr2SCAN-3c: 会合錯体 C_HB の高速最適化
+  ↓
+生成物 P_IP guess: HをHFからN/O側へ移した [MH]+···F− を生成
+  ↓
+経路探索: scan / NEB / CI-NEB / growing string / autodE
+  ↓
+DFT TS最適化: OptTS + Frequency
+  ↓
+IRC: TSが目的のC_HBとP_IPを接続するか検証
+  ↓
+高精度single point: Gaussian同等レベルへ引き上げ
+  ↓
+GoodVibes/Arkane: 気相熱補正、温度・分圧補正、TST速度定数
+  ↓
+CSV/Parquet/SQLite: 候補ランキング
 
----
+RDKitはSDFの読み込み、3D配座生成、MMFF初期最適化に使えます。RDKitには SDMolSupplier や EmbedMultipleConfs などの機能があり、SDF起点の自動前処理に向いています。 ￼ 配座探索はCREST＋GFN-xTBが実用的です。CRESTはxTB法を使った低エネルギー配座探索ワークフローで、xTB自体は半経験的量子化学パッケージです。 ￼
 
-# 6. データモデル（JSONで統一して “ツール差” を吸収）
+受容サイトの自動抽出
 
-ここはMI的に最重要です。
-「RDKit→xTB→pysisyphus→NWChem」と段階が進むほど、ファイル形式がバラけます。
-そこで**内部表現は必ず同じ**（Pydanticで型付け）にしておく。
+アミン系ならまず以下を候補サイトにします。
 
-## 6.1 Molecule（例）
+サイト	例	優先度
+脂肪族アミンN	RNH₂, R₂NH, R₃N	高
+ピリジン型N	pyridine, imine	高
+アニリン型N	aniline	中：孤立電子対がπ共役で弱まる
+エーテル/アルコールO	ROH, ROR	中
+カルボニルO	amide, ester, ketone	中〜低
+ハロゲン/π面	補助的相互作用	低
 
-* `molecule_id`: `MOL_<hash>`
-* `source`: 元SDFパス、CID等
-* `charge`, `multiplicity`
-* `canonical_smiles`, `inchikey`（可能なら）
-* `fragments_detected`: true/false
-* `stereo_undefined_count`: int
-* `geometry_ref`: `xyz`への参照
+各サイトに対して、HFを X···H–F 型に配置します。初期値としては X···H を約1.5–1.8 Å、H–F を約0.92 Åに置き、X周りに数十方向回転させます。xTBまたはr2SCAN-3cで最適化し、重複構造はRMSDとエネルギーでクラスタリングします。
 
-## 6.2 ConformerSet（例）
+⸻
 
-* `parent_molecule_id`
-* `method`: `crest_gfn2xtb`
-* `conformers[]`:
+3. 経路探索とTS探索の具体的方法
 
-  * `conf_id`
-  * `xyz_path`
-  * `energy_hartree`（xTB）
-  * `rank`
-  * `qc_flags`
+方法A：1次元relaxed scanからTSを作る
 
-## 6.3 Complex（遭遇複合体）
+最も堅牢でデバッグしやすい方法です。反応座標を
 
-* `complex_id`
-* `a_molecule_id`, `b_molecule_id`
-* `build_method`: `xtb_docking_aiss_directed`
-* `xyz_path`
-* `binding_energy_est`（低レベル指標）
-* `orientation_tags`（反応テンプレに重要）
+q = r(H–F) − r(X–H)
 
-## 6.4 ReactionCandidate
+とし、q < 0 が M···HF、q > 0 が [MH]+···F− に対応するようにします。q を段階的に固定して、その他の座標を最適化します。エネルギー最大付近の構造をTS初期構造としてDFTの OptTS に渡します。
 
-* `reaction_id`
-* `reaction_class`: `proton_transfer`
-* `reactant_complex_id`
-* `product_guess_id`
-* `sites`: 原子マッピング（donor/acceptor等）
-* `barrierless_candidate`: true/false（早期判定フラグ）
+利点は、失敗時にどこで経路が崩れたか分かりやすいことです。欠点は、単純なプロトン移動以外の座標、たとえばHFの回転、F−の再配向、多点水素結合を取り逃がしやすいことです。
 
----
+方法B：NEB / CI-NEB / growing string
 
-# 7. タスク設計（あなたの指定スタックに沿って具体化）
+C_HB と P_IP の両端構造を用意し、NEBまたはstring法で経路を作ります。ASEのNEBは初期状態と終状態の間の遷移経路と障壁探索に使えます。 ￼ pysisyphusはPES探索、一次鞍点、IRC、NEB、Growing Stringに対応していますが、2024年11月時点でメンテナが「unmaintained」と明記しているため、研究試作には便利でも、量産ワークフローでは代替手段を残すべきです。 ￼ autodEは、反応物・生成物構造からconformer探索、NEB/CI-NEB/adaptive経路探索、TS探索までを自動化する設計なので、候補数が多い場合のTS guess生成に適しています。 ￼
 
-以下では「**処理内容**」「**入出力**」「**主要パラメータ**」「**拡張点**」「**効率化ポイント**」を、タスクごとにまとめます。
+方法C：ORCA NEB-TS / OptTS / IRCを中心にする
 
----
+ORCAを使える環境なら、最も実務的です。ORCAはTS最適化で OptTS を使え、正しいTSは虚振動が1つだけであることを振動解析で確認します。ORCAのチュートリアルでも、TS検証には同じ計算レベルでのFrequency計算とIRCが推奨されています。 ￼
 
-## Task 01: `ingest_dataset`（SDF取り込み・ID採番）
+最小テンプレートは次のようになります。
 
-### 目的
-
-* SDF群（1分子/ファイル）を読み、内部データモデルに登録
-* “SDF品質問題”を検出してフラグ化（塩/多フラグメント、H欠落、立体未定義など）
-
-### 実装
-
-* RDKitで読み込み（pipでRDKitは導入可能） ([PyPI][5])
-* `molecule_id = hash(canonical_smiles + charge + multiplicity + standardize_version)`
-
-### 出力
-
-* `registry/molecules.jsonl`
-* `artifacts/molecules/<molecule_id>/raw.sdf`
-* `artifacts/molecules/<molecule_id>/mol.json`（内部表現）
-
-### 効率化
-
-* ここで**重複排除**（同一分子が別名で混入してもOK）
-* “多フラグメント”は後段爆死の原因なので、早期フラグが重要
-
----
-
-## Task 02: `standardize`（RDKit正規化、H付与、3D下準備）
-
-### 目的
-
-* PubChem由来SDFの揺れを吸収し、計算可能な状態へ
-
-### 処理
-
-* 最大フラグメント抽出（デフォルト）
-* 明示H付与
-* 3D座標が無ければ埋め込み（RDKit）→後段CRESTの初期構造にする
-
-### 出力
-
-* `artifacts/molecules/<id>/std.sdf`
-* `artifacts/molecules/<id>/std.xyz`
-
-### 拡張点
-
-* “反応クラス”に応じて「中和する/しない」「プロトン化状態列挙する/しない」を切り替え
-
----
-
-## Task 03: `conformers_generate`（CREST + xTB）
-
-### 目的
-
-* 候補分子（単体）の配座を列挙し、**上位N**を後段へ
-
-### 外部依存
-
-* CREST は “リリースバイナリを展開してPATHに入れる” 形式での導入が想定されています ([Crest Lab][6])
-* xTB も “GitHubのprecompiled binaries” が案内されています ([Xtb Docs][7])
-
-### 入力
-
-* `std.xyz`
-
-### 出力
-
-* `conformers/<molecule_id>/confs/*.xyz`
-* `conformers/<molecule_id>/conformer_set.json`
-
-### 主要パラメータ（pipeline.yamlで制御）
-
-* `max_conformers_keep`（例：10〜30）
-* `energy_window_kcal`（例：5〜10 kcal/mol）
-* `crest_level`（gfn2 / gfnff 等）
-* `n_jobs`（分子単位並列）
-
-### 効率化ポイント（MI観点）
-
-* **必ず“予算”を入れる**：配座爆発は最初のボトルネック
-* 後段の複合体生成・PES探索は配座数に比例して爆増するため、上位Nで切る
-
----
-
-## Task 04: `complexes_generate`（遭遇複合体：xTB docking / aISS / directed）
-
-### 目的
-
-* 候補分子×HF（将来は他ガス）で “遭遇複合体（pre-reactive complex）” を複数列挙
-
-### 実装
-
-* xTB docking（aISS）を外部実行
-* 反応クラスが “donor/acceptor原子” を指定できる場合は directed docking を優先
-
-### 入力
-
-* `conformer_set.json`（上位N配座）
-* `reactants.yaml`（HF等）
-* `reaction_template` が指定する “注目原子集合”
-
-### 出力
-
-* `complexes/<candidate_id>/<reactant_id>/*.xyz`
-* `complexes_index.jsonl`
-
-### 主要パラメータ
-
-* `max_complexes_per_pair`（例：10〜20）
-* `directed_docking: on/off`
-* `keep_nci_ensemble: on/off`
-
-### 効率化ポイント
-
-* barrierless系が多い（HF×塩基）ほど、複合体の向きが結果を支配 → **複合体列挙をケチるとランキングが崩れる**
-* ただし無限に増やせないので、
-
-  * 反応中心に近いものを優先
-  * binding energy推定で上位を残す
-    のようなフィルタを入れる
-
----
-
-## Task 05: `reactions_enumerate`（反応テンプレで生成物推定）
-
-### 目的
-
-* 現状：HF×アミンのプロトン移動
-* 将来：HF以外/アミン以外も増やせるように、**ReactionTemplateをプラグイン化**
-
-### 実装（例：ProtonTransferテンプレ）
-
-* donor（HF）のHをacceptor（N等）へ移した生成物構造を作る
-* charge/multiplicity ルールもテンプレに持たせる（将来重要）
-
-### 出力
-
-* `reactions/<reaction_id>/reaction.json`
-* `reactions/<reaction_id>/reactant.xyz`
-* `reactions/<reaction_id>/product_guess.xyz`
-
-### 拡張点
-
-* `interfaces/reaction_template.py` を実装するだけで追加できる
-* SMARTSでサイト検出を差し替え可能
-
----
-
-## Task 06: `pes_search`（pysisyphusで NEB/GSM/TS/IRC）
-
-### 目的
-
-* 反応候補ごとに、TS候補探索・IRC検証・barrierless判定をする
-
-### 実装
-
-* pysisyphus は PyPIにあり、GPLv3であることが明記されています ([PyPI][8])
-* ここでは **xTBをエネルギー/勾配エンジン**として使い、低忠実度で多数探索
-
-### 重要：barrierless分岐（先ほどの対策を反映）
-
-* TSが見つからない/単調減少 → `barrierless_candidate = true`
-* 後段で「ΔG‡ではなく ΔG_assoc / 捕獲律速」側で扱う
-
-### 出力
-
-* `pes/<reaction_id>/path.xyz`（反応座標）
-* `pes/<reaction_id>/ts_guess.xyz`
-* `pes/<reaction_id>/irc_endpoints/`
-* `pes/<reaction_id>/pes_result.json`（QCフラグ込み）
-
-### 将来差し替え（ASE+Sella+geomeTRIC）
-
-* **今の段階で設計として差し替え可能にしておく**（実装は後）
-
-  * ASEはpipで入る（LGPL-2.1-or-later） ([PyPI][9])
-  * geomeTRICはpipで入る ([GeomeTRIC Documentation][10])
-  * SellaもPyPIにある ([PyPI][11])
-
----
-
-## Task 07: `dft_refine`（NWChemで最終値を確定）
-
-### 目的
-
-* 上位候補（予算内）だけをDFTで精密化し、活性化自由エネルギー評価に耐える出力を得る
-
-### 重要：このタスクは “prepare/run” を分ける
-
-* `mode: prepare`：NWChem入力生成まで（外部投入は別）
-* `mode: run`：ローカル実行（小規模なら）＋パース
-
-NWChemはソースがGitHub releasesから取得でき、コンパイル手順ページも用意されています ([NWChem][12])
-（conda不可でも「自前ビルド＋PATH」方式は成立）
-
-### 入力
-
-* `ts_guess.xyz`（pysisyphus）
-* DFT条件（functional/basis/dispersion/grid 等）
-
-### 出力
-
-* `dft/<reaction_id>/nwchem.nw`（入力）
-* `dft/<reaction_id>/nwchem.out`（出力）
-* `dft/<reaction_id>/dft_result.json`（エネルギー/周波数/QC）
-
-### 効率化（MI観点）
-
-* DFTは最も重いので、**予算制御タスク（次項）**で絞る
-* 低忠実度で “見込みが薄い候補” を落とし、DFT投入数を固定上限にする
-
----
-
-## Task 07b: `budget_select`（DFTに回す候補選別：MI効率の中核）
-
-### 目的
-
-* xTB/PES結果をもとに、DFT精密化候補を決める
-
-### 典型ルール（例）
-
-* TS系：`xTB ΔE‡` が小さい順に上位K
-* barrierless系：`ΔG_assoc_est`（会合が強い）や “反応熱” を重視
-* 失敗系：再探索回数を超えたら除外（ログを残す）
-
-### 出力
-
-* `selection/dft_targets.jsonl`
-
----
-
-## Task 08: `thermo_export`（GoodVibes用入力生成＋必要なら実行）
-
-### 目的
-
-* **このコードの主眼：フォーマット変換**
-* GoodVibesはpipで導入でき、温度・濃度（=圧力換算）指定も可能 ([PyPI][2])
-
-### モード
-
-* `mode: prepare`：GoodVibes実行コマンド、入力ファイル一覧、PES YAML等を生成
-* `mode: run`：`python -m goodvibes ...` を実行して出力を集約
-
-### 出力（例）
-
-* `thermo/goodvibes/input_files.txt`
-* `thermo/goodvibes/pes.yaml`
-* `thermo/goodvibes/goodvibes.tsv`（集約した結果）
-
----
-
-## Task 09: `arkane_export`（Arkane入力生成：当面 “実行しない” 前提が現実的）
-
-### 背景
-
-ArkaneはRMG-Pyに含まれ、インストールはRMG-Pyに依存します ([Reaction Mechanism Generator][13])。
-RMG-Pyの推奨導入はDockerで、conda無しでの“素直なpip導入”が前提になっていません ([Reaction Mechanism Generator][3])。
-→ conda不可の条件では、**当面「入力生成＋Docker等で外部実行」**が安全です。
-
-### 目的
-
-* DFT/GoodVibes出力から、Arkaneの入力ファイル群（species/TS/reaction/network）を生成
-
-### 出力例
-
-* `arkane/inputs/arkane_input.py`
-* `arkane/inputs/species/*.py`
-* `arkane/inputs/ts/*.py`
-* `arkane/README_run_in_docker.md`
-
----
-
-## Task 10: `cantera_export`（Cantera入力生成：維持）
-
-### 目的
-
-* Canteraの機構ファイル（YAML）に落とすための変換を行う
-* Canteraはpipでも導入可能 ([Cantera][4])
-
-### モード
-
-* `mode: prepare`：機構テンプレ生成（反応式、パラメータ枠）
-* `mode: fill`：Arkaneなど外部結果を取り込んで埋める（将来）
-
----
-
-## Task 11: `summarize_rank`（材料探索向けの最終集計）
-
-### 目的（MI観点）
-
-* “材料探索”として見たいのは単なるΔG‡一覧ではなく、少なくとも：
-
-  * 反応タイプ（TS系 / barrierless系）
-  * 錯体基準ΔG‡、分離基準ΔG‡、ΔG_assoc
-  * QC（TS/IRC/虚数の数、収束、再現性）
-  * 計算レベル（xTB/DFT）
-    を含む表。
-
-### 出力
-
-* `summary/results.parquet`（推奨：大規模に強い）
-* `summary/results.csv`
-* `summary/topN.md`
-
----
-
-# 8. プラグイン設計（手法の追加・改良を第三者がしやすい）
-
-## 8.1 “インターフェース（ABC）”を先に固定する
-
-例：PES探索エンジン
-
-```python
-# interfaces/pes.py
-class PESExplorer(ABC):
-    name: str
-    @abstractmethod
-    def prepare(self, reaction: ReactionCandidate, params: dict, workdir: Path) -> PreparedJob: ...
-    @abstractmethod
-    def run(self, job: PreparedJob) -> PESResult: ...
-```
-
-* `impl/pes_pysisyphus_xtb.py` はこのIFに従う
-* 将来 `impl/pes_ase_sella.py` を追加しても、タスク本体は変更不要
-
-同様に DFT も：
-
-```python
-class DFTEngine(ABC):
-    def prepare_input(...)
-    def run(...)
-    def parse_output(...)
-```
-
-NWChem実装（今）／Psi4（将来）／PySCF（将来）を並列に保持できます。
-
----
-
-# 9. “ツール導入（conda禁止）”を満たすための実装方針
-
-## 9.1 Pythonライブラリ（pip前提）
-
-* RDKit：PyPIのwheelが提供されており `pip install rdkit` が案内されています ([PyPI][5])
-* pysisyphus：PyPIで提供（GPLv3） ([PyPI][8])
-* GoodVibes：PyPIで `pip install goodvibes` が明記 ([PyPI][2])
-* Cantera：pip導入の公式ドキュメントあり ([Cantera][4])
-* PySCF：pip導入が推奨されている ([pyscf.org][14])
-* gpu4pyscf：PyPIで配布（例：2025/12/26リリース情報） ([PyPI][15])
-* ASE：PyPIで配布（LGPL-2.1-or-later） ([PyPI][9])
-* geomeTRIC：pipで導入可能 ([GeomeTRIC Documentation][10])
-* ClearML：pipで導入可能（将来） ([PyPI][16])
-
-`requirements.txt`（例）：
-
-```text
-pydantic>=2
-typer>=0.12
-rich>=13
-ruamel.yaml>=0.18
-numpy
-scipy
-pandas
-pyarrow
-networkx
-rdkit
-pysisyphus
-goodvibes
-cantera
-# 将来差し替え用（今はoptional）
-ase
-sella
-geometric
-pyscf
-gpu4pyscf
-clearml
-```
-
-> ※ `ase/sella/geometric/pyscf/gpu4pyscf/clearml` は “extras” として分離しても良いです（`pip install .[ase]` のように）。
-
-## 9.2 外部バイナリ（PATHに置く：pipでは入らない）
-
-* xTB：precompiled binariesの案内がある ([Xtb Docs][7])
-* CREST：リリースバイナリを展開してPATHへ、が案内されている ([Crest Lab][6])
-* NWChem：ソースはGitHub releases、コンパイルページあり ([NWChem][12])
-
-### コード側の扱い
-
-`tools.yaml` で明示し、`ToolRegistry` が起動時に `--version` で検査して `run_manifest.json` に記録します（再現性とデバッグ性が上がる）。
-
----
-
-# 10. ClearML（将来）を見越した “今の実装” の入れ方
-
-## 10.1 追跡（Tracking）を抽象化する
-
-* `Tracker` IF を作り、今は `LocalTracker`（JSONとファイルコピー）で実装
-* 将来 `ClearMLTracker` に差し替え
-
-ClearMLはパイプラインをローカルで動かせる（サブプロセス）ことが明記 ([ClearML][1])。
-したがって、
-
-* **今：pipeline runner = subprocess実行**
-* **将来：ClearML PipelineDecorator = subprocess実行**
-
-という一致が取れます（移行が最小）。
-
----
-
-# 11. 最後に：この設計が “半導体ガスエッチング×材料探索” に効く理由（MI観点）
-
-1. **予算制御（budget_select）**でDFT投入数を固定し、探索が破綻しない
-2. **barrierless分岐**を設計に含め、HF×塩基の“TSが無い/浅い”ケースで止まらない
-3. **錯体/分離の二基準**でΔG‡を出せるので、会合が効く装置条件でも解釈がぶれにくい
-4. すべてのタスクが **同じI/O規約（inputs/outputs/metrics/qc_flags）**で動くため、第三者が途中から入っても追える
-5. ClearMLの将来導入に合わせて「サブプロセス実行」「成果物・パラメータの規約化」を先に整えている
-
----
-
-[1]: https://clear.ml/docs/latest/docs/pipelines/?utm_source=chatgpt.com "ClearML Pipelines"
-[2]: https://pypi.org/project/goodvibes/3.2/ "goodvibes · PyPI"
-[3]: https://reactionmechanismgenerator.github.io/RMG-Py/users/rmg/installation/index.html "3. Installation — RMG-Py 3.3.0 Documentation"
-[4]: https://cantera.org/3.1/install/pip.html?utm_source=chatgpt.com "Installing with Pip — Cantera 3.1.0 documentation"
-[5]: https://pypi.org/project/rdkit/?utm_source=chatgpt.com "rdkit"
-[6]: https://crest-lab.github.io/crest-docs/page/installation/install_basic.html?utm_source=chatgpt.com "Step-by-step Installation | CREST Docs"
-[7]: https://xtb-docs.readthedocs.io/en/latest/setup.html?utm_source=chatgpt.com "Setup and Installation — xtb doc 2023 documentation"
-[8]: https://pypi.org/project/pysisyphus/?utm_source=chatgpt.com "pysisyphus"
-[9]: https://pypi.org/project/ase/?utm_source=chatgpt.com "ase"
-[10]: https://geometric.readthedocs.io/en/1.1/install.html?utm_source=chatgpt.com "Installation — geomeTRIC 1.1 documentation"
-[11]: https://pypi.org/project/Sella/?utm_source=chatgpt.com "Sella"
-[12]: https://nwchemgit.github.io/Download.html?utm_source=chatgpt.com "How to download and install NWChem"
-[13]: https://reactionmechanismgenerator.github.io/RMG-Py/users/arkane/installation.html "2. Installation — RMG-Py 3.3.0 Documentation"
-[14]: https://pyscf.org/user/install.html?utm_source=chatgpt.com "How to install PySCF"
-[15]: https://pypi.org/project/gpu4pyscf/?utm_source=chatgpt.com "gpu4pyscf"
-[16]: https://pypi.org/project/clearml/?utm_source=chatgpt.com "clearml"
+! r2SCAN-3c TightSCF Opt Freq
+%pal nprocs 16 end
+* xyzfile 0 1 complex.xyz
+
+TS精密化：
+
+! r2SCAN-3c TightSCF OptTS Freq
+%pal nprocs 16 end
+%geom
+  Calc_Hess true
+end
+* xyzfile 0 1 ts_guess.xyz
+
+IRC：
+
+! r2SCAN-3c TightSCF IRC
+%pal nprocs 16 end
+* xyzfile 0 1 ts_optimized.xyz
+
+IRC後、両端を再最適化し、片側が M···HF、もう片側が [MH]+···F− または目的生成物に戻るかを確認します。
+
+⸻
+
+4. Gaussian同等精度を狙う計算レベル
+
+Gaussianと比較するなら、「Gaussian B3LYP/6-31+G(d,p)」のような古典的設定に合わせるより、現在は長距離補正・分散補正・拡散関数つき基底を使う方がよいです。HF、F−、接触イオン対、水素結合を扱うため、拡散関数は重要です。
+
+推奨レベル
+
+用途	推奨	理由
+大量初期探索	GFN2-xTB / CREST	配座・会合錯体・経路guessを高速生成
+DFT構造最適化	r2SCAN-3c または ωB97X-3c	分散・BSSE補正込みの実用的composite DFT
+TS最適化・freq	r2SCAN-3c → 必要に応じて ωB97X-D/def2-SVP(D)	TS探索の安定性とコストのバランス
+最終single point	ωB97M-V/def2-TZVPD、ωB97X-D4/def2-TZVPPD、revDSD-PBEP86-D4/def2-TZVPPD	水素結合、イオン対、反応障壁の精度向上
+小規模benchmark	DLPNO-CCSD(T)/def2-TZVPP(D) または canonical CCSD(T)	DFTランキングの較正
+熱補正	quasi-RRHO / quasi-harmonic	低振動数の過大エントロピーを抑制
+
+ORCAにはHF-3c、B97-3c、r2SCAN-3c、PBEh-3cなどのcomposite methodがあり、ωB97X-3cも利用できます。 ￼ Psi4はオープンソースで、DFT、MP2、SAPT、coupled clusterなどに対応し、WB97M-VやWB97X-D系の汎関数も扱えます。 ￼ PySCFはApache-2.0の自由なPython量子化学基盤で、DFTやD3/D4分散補正を組み込んだワークフローを作れます。 ￼ NWChemもHPC向けのオープンソース量子化学コードで、DFTモジュールを備えています。 ￼
+
+DLPNO-CCSD(T)はGaussian的なDFT比較を超えた較正用として有効です。ORCAはDLPNO-CCSD(T)やDLPNO-MP2を扱え、Psi4にもDLPNO-CCSD(T)のドキュメントがあります。 ￼ ただしORCAは学術利用では無償配布されていますが、商用利用は別ライセンス扱いです。半導体企業内で完全にフリー/OSSに限定するなら、Psi4、PySCF、NWChemを主エンジンにし、ORCAはライセンス確認後の選択肢にするのが安全です。 ￼
+
+⸻
+
+5. 無料ツール構成の現実的な比較
+
+役割	第1候補	代替	コメント
+SDF読込・前処理	RDKit	Open Babel	RDKit中心で十分
+配座探索	CREST/GFN2-xTB	RDKit MMFF, ETKDG	CRESTを推奨
+HF会合体生成	自作Python/RDKit	ASE	幾何配置は自作が最も制御しやすい
+経路探索	ORCA NEB-TS, autodE	ASE NEB + Sella, pysisyphus, ASH	ORCA不可ならASE/Sella/ASH
+DFT opt/freq	ORCA	Psi4, PySCF, NWChem	商用完全フリーならPsi4/PySCF/NWChem
+高精度single point	ORCA DLPNO-CCSD(T)	Psi4 CCSD(T)/DLPNO, NWChem CCSD(T)	小分子subsetで較正
+熱補正	GoodVibes	Arkane	GoodVibesはORCA/Psi4/NWChem/xTB出力に対応
+速度定数	Arkane	自作TST	T依存rateが必要ならArkane
+出力parse	cclib	OPI, 自作parser	cclibは複数QCコード出力を読める
+workflow	Snakemake/quacc	FireWorks, Parsl	job array化しやすい
+
+ASHはORCA、xTB、CP2K、Psi4、PySCF、Gaussian、NWChemなどへのインターフェースを持ち、最適化、振動数、MD、scan、NEBなどのjob typeを扱えるため、複数エンジンをまたぐワークフローの上位層として有用です。 ￼ GoodVibesはGaussian、ORCA、NWChem、Q-Chem、xTB、ASEなどの出力から準調和熱補正を計算でき、低振動数のRRHO問題を扱えます。 ￼ Arkaneは量子化学計算から熱力学量やTST速度定数を計算でき、ORCAやPsi4などの出力にも対応しています。 ￼
+
+NBO解析は多くの場合、有償NBOプログラムが必要になるため、完全フリー範囲では避けた方がよいです。代わりに、ORCAのMayer bond orderやLöwdin/Mulliken解析、またはMultiwfnによる波動関数解析を使うのが現実的です。 ￼
+
+⸻
+
+6. 実装イメージ：SDFから候補ジョブを作る
+
+最初の自動化は、以下のようなPythonスクリプトで組みます。
+
+from pathlib import Path
+from rdkit import Chem
+from rdkit.Chem import AllChem
+SDF = "candidates.sdf"
+OUT = Path("jobs")
+OUT.mkdir(exist_ok=True)
+def prepare_mol(mol, mol_id):
+    mol = Chem.AddHs(mol, addCoords=True)
+    if mol.GetNumConformers() == 0:
+        params = AllChem.ETKDGv3()
+        params.randomSeed = 20260508
+        conf_ids = AllChem.EmbedMultipleConfs(
+            mol,
+            numConfs=50,
+            params=params
+        )
+        AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=500)
+    return mol
+def find_acceptor_atoms(mol):
+    # 例：中性アミンN、ピリジン型N、O原子を抽出。
+    # 実運用ではSMARTSを増やし、アミドNや四級アンモニウムを除外する。
+    acceptors = []
+    for atom in mol.GetAtoms():
+        z = atom.GetAtomicNum()
+        charge = atom.GetFormalCharge()
+        if z in (7, 8) and charge <= 0:
+            acceptors.append(atom.GetIdx())
+    return acceptors
+supplier = Chem.SDMolSupplier(SDF, removeHs=False)
+for i, mol in enumerate(supplier):
+    if mol is None:
+        continue
+    name = mol.GetProp("_Name") if mol.HasProp("_Name") else f"mol_{i:04d}"
+    mol = prepare_mol(mol, name)
+    acceptors = find_acceptor_atoms(mol)
+    mol_dir = OUT / name
+    mol_dir.mkdir(exist_ok=True)
+    for conf in mol.GetConformers():
+        conf_id = conf.GetId()
+        # ここでXYZを書き出し、CREST/xTBへ渡す。
+        # その後、各acceptor atomにHFを複数方向で配置し、
+        # complex.xyz, product_guess.xyzを生成する。
+        pass
+
+この後に作るジョブディレクトリは、たとえば次のようにします。
+
+jobs/
+  mol_0001/
+    conf_000/
+      site_N_05/
+        00_xtb_complex/
+        01_dft_complex/
+        02_product_guess/
+        03_neb_or_scan/
+        04_ts_opt/
+        05_irc/
+        06_sp_highlevel/
+        result.json
+
+各 result.json に、計算レベル、SCF収束、虚振動数、IRC成功可否、エネルギー、自由エネルギー、HF結合長、電荷などを保存します。最後に全候補を集約してランキングします。
+
+⸻
+
+7. 出力すべきランキング指標
+
+候補分子ごとに、少なくとも以下を出すべきです。
+
+指標	意味
+ΔG_bind	M + HF → M···HF の会合自由エネルギー
+ΔE‡_int	会合錯体基準の電子エネルギー障壁
+ΔG‡_int	会合錯体基準の自由エネルギー障壁
+ΔG‡_app	分離気相分子基準の見かけ自由エネルギー障壁
+ΔG_rxn	[MH]+···F− 形成の自由エネルギー
+r_HF	錯体中のHF結合長
+Δr_HF	孤立HFからの伸長
+ν_HF	HF伸縮振動数、赤方シフト
+q_F, q_H	F/Hの電荷変化
+BO_HF	H–F結合次数
+imag_freq	TSの虚振動数
+IRC_status	正しい反応物・生成物に接続したか
+status	normal / barrierless / no_product / failed
+
+HF活性化剤の探索では、単に障壁だけを見るより、HF結合長の伸長、HF振動数の赤方シフト、H–F結合次数低下、F側の電荷増大を併用した方が頑健です。水素結合錯体の結合エネルギーを比較する場合は、counterpoise補正または大きめの基底関数を使います。ORCAやPsi4にはcounterpoise/BSSE補正の機能があり、3c系methodにはgCP補正が組み込まれています。 ￼
+
+⸻
+
+8. 最新手法：MLポテンシャルは「TS guess生成」に使う
+
+2025–2026年時点では、分子反応経路探索にMLポテンシャルを使う流れが急速に進んでいます。OMol25はωB97M-V/def2-TZVPDレベルの1億件超のDFT計算を含む大規模データセットとして報告され、広範な元素・電荷・スピン・反応構造を対象にしています。 ￼ 2026年のpreprintでは、MACE-OMol25、UMA、eSEN、AIMNet2、GFN2-xTBなどの自由に使えるポテンシャルを組み合わせ、freezing stringやCI-NEBでTSを自動探索する手法が報告され、有機系反応でDFT勾配回数を大きく削減できるとされています。 ￼ UMA系モデルはFAIRChemのASE calculator経由で使え、AIMNet2もエネルギー、力、電荷、Hessianなどを予測する反応系向けモデルとして公開されています。 ￼
+
+ただし、HF、F−、接触イオン対、強いプロトン移動はMLモデルの外挿になりやすいので、最終障壁は必ずDFTで再最適化・freq・IRC検証してください。MLは次の用途に限定するのが安全です。
+
+1. HF会合体の初期構造スクリーニング
+2. NEB/string経路の初期guess生成
+3. TS guessの候補順位付け
+4. DFTで失敗した経路の再初期化
+
+⸻
+
+9. 推奨する実運用スタック
+
+学術・ORCA利用可の場合
+
+RDKit
++ CREST/GFN2-xTB
++ ORCA 6.x / OPI
++ GoodVibes
++ cclib
++ Snakemake or quacc
+
+ORCAは学術利用では無償で、semiempiricalからDFT、多参照・相関ab initioまで広い手法を備えています。 ￼ ORCA 6.1以降ではPython連携のOPIも整備されており、入力生成・出力解析の自動化に使えます。 ￼
+
+企業内で完全フリー/OSSを優先する場合
+
+RDKit
++ CREST/GFN2-xTB
++ ASE/Sella/autodE/ASH
++ Psi4 and/or PySCF and/or NWChem
++ GoodVibes
++ cclib
++ Snakemake/quacc
+
+この構成なら商用ライセンス制約をかなり避けられます。Psi4、PySCF、NWChemはいずれも無料・オープンソース系の量子化学基盤です。 ￼ cclibは量子化学出力ファイルを横断的にparseできるため、複数エンジンを使う自動化で便利です。 ￼
+
+⸻
+
+10. 最初に作るべき検証セット
+
+SDF本番候補に入る前に、以下の小セットでワークフローを検証するとよいです。
+
+NH3
+methylamine
+dimethylamine
+trimethylamine
+pyridine
+aniline
+H2O
+methanol or isopropanol
+
+理由は、N系/O系、脂肪族/芳香族、強塩基/弱塩基の差が出るためです。2026年のHF活性化研究でも、H₂O、IPA、アニリン、ピリジン、ジメチルアミン、トリメチルアミンが比較対象に含まれており、候補分子の傾向確認に使いやすいです。 ￼
+
+この検証セットで以下を確認します。
+
+1. M···HF錯体が妥当に最適化されるか
+2. HF結合長・振動数シフトが化学直感と合うか
+3. TSが1つの虚振動を持つか
+4. IRCが正しいC_HBとP_IPを結ぶか
+5. r2SCAN-3c, ωB97X-D, ωB97M-V の順位が大きく矛盾しないか
+6. DLPNO-CCSD(T) single pointでDFT順位を較正できるか
+
+⸻
+
+11. 提案する最終ワークフロー
+
+本件では、以下の二段階設計を推奨します。
+
+Screening workflow
+
+SDF
+→ RDKit sanitize / H付加 / 配座生成
+→ CREST/GFN2-xTB配座探索
+→ HF会合体を各N/Oサイトに自動配置
+→ xTBまたはr2SCAN-3cで錯体最適化
+→ relaxed scanまたはNEBでTS guess生成
+→ r2SCAN-3c OptTS/Freq/IRC
+→ ΔG‡_int, ΔG‡_app, HF活性化指標でランキング
+
+High-accuracy workflow
+
+上位候補 10–30件
+→ ωB97X-3c または ωB97X-D/def2-TZVP(D)で再opt/freq
+→ ωB97M-V/def2-TZVPD または ωB97X-D4/def2-TZVPPD single point
+→ 小分子・上位候補subsetでDLPNO-CCSD(T)較正
+→ GoodVibesで温度・準調和補正
+→ 実プロセス温度・HF分圧・添加剤分圧で ΔG‡_app 補正
+
+これで、SDFに入った複数候補を自動処理しつつ、最終的にはGaussianで一般に行うDFT障壁計算と同等、場合によってはそれ以上に体系的な比較ができます。特に重要なのは、TSの虚振動1つだけでは不十分で、IRCで本当に M···HF と [MH]+···F− を接続していることを確認する点です。HF活性化では、見かけの低障壁TSが別の配座変換やHF回転であることがあるため、IRC検証を自動判定に入れるべきです。
