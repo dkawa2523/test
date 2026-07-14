@@ -1,0 +1,241 @@
+## Example configuration for the custom AutoML library.
+## Users can modify this file to control how the pipeline behaves.
+
+# -----------------------------------------------------------------------------
+# DATA SETTINGS
+# -----------------------------------------------------------------------------
+data:
+  # Path to the input CSV file. The file should contain both the input
+  # features and the target variable. Relative paths are interpreted with
+  # respect to the working directory when the program is executed.
+  csv_path: "data/example.csv"
+
+  # Name of the column in the CSV file that contains the target variable. If
+  # omitted or set to null, the last column will be treated as the target.
+  target_column: purchase_amount
+
+  # Optional list of column names to use as input features. If null or an empty
+  # list, all columns except the target column will be used.
+  feature_columns: null
+
+  # Problem type. Set to "regression" or "classification" to override
+  # automatic detection. If null, the code will infer the type from the
+  # target variable's data type (numeric -> regression, categorical ->
+  # classification).
+  problem_type: null
+
+  # Proportion of the data to reserve for the hold‑out test set. A value of
+  # 0.0 means all samples are used in cross‑validation without a separate
+  # test set. Because the data volumes are small (10–50 rows), you may
+  # prefer leaving this at 0.0 and rely solely on cross‑validation.
+  test_size: 0.0
+
+  # Random seed used for data shuffling and model reproducibility.
+  random_seed: 42
+
+# -----------------------------------------------------------------------------
+# PREPROCESSING SETTINGS
+# -----------------------------------------------------------------------------
+preprocessing:
+  # Strategies for imputing missing numeric values. Allowed values are
+  # 'mean', 'median', 'most_frequent' and null (no imputation). Multiple
+  # strategies can be specified; each one will be evaluated.
+  numeric_imputation: ['mean']
+
+  # Strategies for imputing missing categorical values. Allowed values are
+  # 'most_frequent' and null (no imputation).
+  categorical_imputation: ['most_frequent']
+
+  # List of scaling strategies to apply to numeric features. Supported
+  # strings: 'standard' (StandardScaler), 'minmax' (MinMaxScaler),
+  # 'robust' (RobustScaler) or null to skip scaling. Each option will
+  # generate a separate preprocessing pipeline.
+  scaling: ['standard']
+
+  # List of encoding strategies for categorical features. Supported
+  # values: 'onehot' (OneHotEncoder), 'ordinal' (OrdinalEncoder), or
+  # null to leave categorical variables untouched. When null is used,
+  # models that cannot handle categorical features natively will throw
+  # an error unless the dataset contains no categorical variables.
+  categorical_encoding: ['onehot']
+
+  # Polynomial feature generation. Provide an integer degree (e.g. 2) to
+  # include polynomial features up to that degree or set to false to
+  # disable polynomial expansion.
+  polynomial_degree: false
+
+  # Whether to standardize the target variable (regression only) using
+  # StandardScaler before model training. Predictions will be inverse-
+  # transformed back to the original scale.
+  target_standardize: true
+
+# -----------------------------------------------------------------------------
+# MODEL SETTINGS
+# -----------------------------------------------------------------------------
+models:
+  # List of model configurations. Each item must have a 'name' key
+  # corresponding to a built‑in model (see model_factory.py for supported
+  # names). A 'params' mapping can be provided to override default
+  # hyperparameters. When a parameter value is a list, the pipeline will
+  # perform a grid search over all combinations (Cartesian product) of
+  # provided values.
+  - name: LinearRegression
+    params: {}
+
+  - name: Ridge
+    params:
+      alpha: [0.1, 1.0]
+
+  - name: Lasso
+    params:
+      alpha: [0.1, 1.0]
+
+  - name: ElasticNet
+    params:
+      alpha: [0.1, 1.0]
+      l1_ratio: [0.5]
+
+  - name: SVR
+    params:
+      kernel: ['rbf']
+      C: [1.0]
+      epsilon: [0.1]
+
+  - name: RandomForest
+    params:
+      n_estimators: [100]
+      max_depth: [null]
+
+  - name: ExtraTrees
+    params:
+      n_estimators: [200]
+      max_depth: [null]
+
+  - name: GradientBoosting
+    params:
+      n_estimators: [200]
+      learning_rate: [0.1]
+
+  - name: LightGBM
+    params:
+      num_leaves: [31]
+      learning_rate: [0.1]
+
+  - name: XGBoost
+    params:
+      n_estimators: [200]
+      learning_rate: [0.1]
+      max_depth: [3]
+
+  - name: CatBoost
+    params:
+      iterations: [300]
+      depth: [6]
+      learning_rate: [0.1]
+
+  - name: GaussianProcess
+    params:
+      kernel: ['RBF']
+
+  - name: KNeighbors
+    params:
+      n_neighbors: [3]
+
+  - name: MLP
+    params:
+      hidden_layer_sizes: [(64,)]
+      activation: ['relu']
+      learning_rate_init: [0.001]
+
+  # Optional deep models. These will only be used if the corresponding
+  # libraries are installed. You can comment them out if you do not wish to
+  # include them.
+  - name: TabNet
+    params:
+      n_d: [8]
+      n_a: [8]
+
+  - name: TabPFN
+    params: {}
+
+# -----------------------------------------------------------------------------
+# ENSEMBLE SETTINGS
+# -----------------------------------------------------------------------------
+ensembles:
+  stacking:
+    enable: true
+    estimators: ['RandomForest', 'XGBoost', 'LightGBM']
+    final_estimator: 'LinearRegression'
+
+  voting:
+    enable: true
+    estimators: ['RandomForest', 'XGBoost', 'LightGBM']
+    voting: 'hard'  # 'hard' for classification, 'soft' or 'mean' for regression
+
+# -----------------------------------------------------------------------------
+# CROSS‑VALIDATION SETTINGS
+# -----------------------------------------------------------------------------
+cross_validation:
+  # Number of folds for k‑fold cross validation. Use a value equal to the number
+  # of samples to perform leave‑one‑out cross‑validation. When set to null, the
+  # code will choose min(5, n_samples) folds.
+  n_folds: 5
+
+  # Whether to shuffle the data before splitting into folds. Note that
+  # LeaveOneOut cross‑validation does not allow shuffling.
+  shuffle: true
+
+  # Random seed for fold shuffling.
+  random_seed: 42
+
+# -----------------------------------------------------------------------------
+# OUTPUT SETTINGS
+# -----------------------------------------------------------------------------
+output:
+  # Directory into which trained models, logs, evaluation results and plots
+  # will be saved. Relative paths are allowed.
+  output_dir: "outputs/train"
+
+  # Whether to save trained models to disk.
+  save_models: true
+
+  # Whether to generate visualizations. If false, plots will not be created.
+  generate_plots: true
+
+  # File name for the summary CSV containing cross‑validation results for all
+  # (preprocessor, model, parameter) combinations.
+  results_csv: "results_summary.csv"
+
+# -----------------------------------------------------------------------------
+# EVALUATION SETTINGS
+# -----------------------------------------------------------------------------
+evaluation:
+  # Metrics for regression tasks. Choose any subset of ['mae','rmse','r2'].
+  regression_metrics: ['mae', 'rmse', 'r2']
+  # Metrics for classification tasks. Choose any subset of
+  # ['accuracy','precision_macro','recall_macro','f1_macro','roc_auc_ovr'].
+  classification_metrics: ['accuracy', 'f1_macro', 'roc_auc_ovr']
+  # Primary metric used to pick the best model. If null, defaults to 'r2'
+  # for regression and 'accuracy' for classification.
+  primary_metric: null
+
+# -----------------------------------------------------------------------------
+# HYPERPARAMETER OPTIMIZATION SETTINGS
+# -----------------------------------------------------------------------------
+optimization:
+  # Choose 'grid', 'random' or 'bayesian' (requires Optuna).
+  method: 'grid'
+  # Number of iterations for random or bayesian search. Ignored for grid.
+  n_iter: 100
+
+# -----------------------------------------------------------------------------
+# INTERPRETATION SETTINGS
+# -----------------------------------------------------------------------------
+interpretation:
+  # Whether to compute feature importance for models that support it (e.g.,
+  # tree-based models). Plots will be saved if enabled.
+  compute_feature_importance: true
+  # Whether to compute SHAP values for supported models. Requires the
+  # 'shap' library. Plots will be saved if enabled and the library is
+  # available.
+  compute_shap: true
