@@ -1,0 +1,51 @@
+schema_version: 1
+case:
+  name: ar_o2
+  gases:
+  - Ar
+  - O2
+readiness:
+  mechanism_ready_for_review: true
+  generation_complete: true
+  dnt_ready_pairs:
+    ready: 3
+    total: 3
+    scope: pair_properties
+  dnt_complete_readiness:
+    ready: 0
+    ready_with_warnings: 3
+    missing_required_data: 0
+    no_dnt_channels: 0
+    total: 3
+    scope: pair_properties_and_channels
+  cross_section_asset_coverage_fraction: 0.0
+  provenance_coverage_fraction: 0.863636
+top_missing_actions:
+- action: import_cross_sections
+  priority: high
+  count: 1
+  subjects:
+  - e_O2_dissociation_O_O1D
+- action: manual_review
+  priority: low
+  count: 4
+  subjects:
+  - Arp_Ar_resonant_charge_exchange
+  - Arp_O2_charge_transfer
+  - Arp_O2_dissociative_charge_transfer_Op_O
+  - Op_O2_charge_transfer
+warnings:
+  generation_truncated: false
+  inferred_fraction_high: false
+  cross_section_coverage_low: true
+  dnt_required_properties_missing: false
+  dnt_channel_inputs_incomplete: false
+notes:
+- Advisory summary only; generation is not blocked by this file.
+- A truncated generation is never marked mechanism-ready for review.
+- Reaction-list readiness is independent of optional DNT and calculated-result inputs.
+- Cross-section coverage counts electron reactions with registered local asset paths.
+- DNT pair-property and complete channel-input readiness are reported separately;
+  neither runs a solver.
+- DNT gaps become warnings only when outputs.dnt_inputs is explicitly enabled.
+truncations: []

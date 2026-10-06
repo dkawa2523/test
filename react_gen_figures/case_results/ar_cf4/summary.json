@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "case": {
+    "name": "ar_cf4",
+    "gases": [
+      "Ar",
+      "CF4"
+    ]
+  },
+  "n_species": 17,
+  "n_reactions": 59,
+  "n_electron_reactions": 23,
+  "n_ion_neutral_reactions": 27,
+  "reactions_by_family": {
+    "electron": 23,
+    "ion_ion": 1,
+    "ion_neutral": 27,
+    "neutral_neutral": 8
+  },
+  "n_pairs_found": 30,
+  "n_pairs_missing": 0,
+  "n_dnt_tasks": 13,
+  "n_missing_data_items": 26,
+  "generation_complete": true,
+  "truncations": [],
+  "n_reactions_with_cross_section_asset": 0,
+  "n_reactions_missing_cross_section": 23,
+  "n_reactions_with_provenance": 33,
+  "n_inferred_reactions": 0,
+  "n_imported_reactions": 0,
+  "n_literature_supported_reactions": 18,
+  "by_depth": {
+    "0": {
+      "n_reactions": 12,
+      "n_electron_reactions": 12,
+      "n_ion_neutral_reactions": 0
+    },
+    "1": {
+      "n_reactions": 38,
+      "n_electron_reactions": 7,
+      "n_ion_neutral_reactions": 27
+    },
+    "2": {
+      "n_reactions": 7,
+      "n_electron_reactions": 3,
+      "n_ion_neutral_reactions": 0
+    },
+    "3": {
+      "n_reactions": 2,
+      "n_electron_reactions": 1,
+      "n_ion_neutral_reactions": 0
+    }
+  },
+  "registry": {
+    "mode": "explicit_registry",
+    "base_registry": "registry",
+    "pack": null,
+    "coverage_gap": false
+  }
+}

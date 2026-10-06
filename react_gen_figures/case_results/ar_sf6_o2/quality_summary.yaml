@@ -1,0 +1,92 @@
+schema_version: 1
+case:
+  name: ar_sf6_o2
+  gases:
+  - Ar
+  - SF6
+  - O2
+readiness:
+  mechanism_ready_for_review: true
+  generation_complete: true
+  dnt_ready_pairs:
+    ready: 19
+    total: 68
+    scope: pair_properties
+  dnt_complete_readiness:
+    ready: 0
+    ready_with_warnings: 18
+    missing_required_data: 49
+    no_dnt_channels: 1
+    total: 68
+    scope: pair_properties_and_channels
+  cross_section_asset_coverage_fraction: 0.0
+  provenance_coverage_fraction: 0.987395
+top_missing_actions:
+- action: enrich_properties
+  priority: high
+  count: 21
+  subjects:
+  - F2
+  - S
+  - SF
+  - SF2
+  - SF3
+  - SF4
+  - SF5
+- action: import_cross_sections
+  priority: high
+  count: 29
+  subjects:
+  - e_O2_dissociation_O_O1D
+  - e_SF6_dissociation_SF2_F2_2F
+  - e_SF6_dissociation_SF_F2_3F
+  - e_SF6_dissociative_ionization_SF4p_2F
+  - e_SF6_dissociative_ionization_SF3p_3F
+  - e_SF6_dissociative_ionization_SF2p_F2_2F
+  - e_SF6_dissociative_ionization_SFp_F2_3F
+  - e_SF6_dissociative_ionization_Sp_F2_4F
+  - e_SF6_dissociative_ionization_Fp_SF4_F
+  - e_SF6_attachment_SF4m_2F
+- action: review_reaction_energetics
+  priority: medium
+  count: 63
+  subjects:
+  - F_m_F_detachment
+  - F_m_F2_detachment
+  - F_m_SF_detachment
+  - F_m_SF2_detachment
+  - F_m_SF3_detachment
+  - F_m_SF4_detachment
+  - F_m_SF5_detachment
+  - F_m_SF6_detachment
+  - F2_m_F_detachment
+  - F2_m_F2_detachment
+- action: manual_review
+  priority: low
+  count: 77
+  subjects:
+  - F2
+  - F2-
+  - FO
+  - S
+  - SF
+  - SF2
+  - SF2-
+  - SF3-
+  - SF4-
+  - Arp_Ar_resonant_charge_exchange
+warnings:
+  generation_truncated: false
+  inferred_fraction_high: false
+  cross_section_coverage_low: true
+  dnt_required_properties_missing: false
+  dnt_channel_inputs_incomplete: false
+notes:
+- Advisory summary only; generation is not blocked by this file.
+- A truncated generation is never marked mechanism-ready for review.
+- Reaction-list readiness is independent of optional DNT and calculated-result inputs.
+- Cross-section coverage counts electron reactions with registered local asset paths.
+- DNT pair-property and complete channel-input readiness are reported separately;
+  neither runs a solver.
+- DNT gaps become warnings only when outputs.dnt_inputs is explicitly enabled.
+truncations: []

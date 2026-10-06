@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "case": {
+    "name": "ar_sf6_o2",
+    "gases": [
+      "Ar",
+      "SF6",
+      "O2"
+    ]
+  },
+  "n_species": 43,
+  "n_reactions": 238,
+  "n_electron_reactions": 54,
+  "n_ion_neutral_reactions": 70,
+  "reactions_by_family": {
+    "electron": 54,
+    "electron_ion": 1,
+    "ion_ion": 56,
+    "ion_neutral": 70,
+    "neutral_neutral": 56,
+    "unimolecular": 1
+  },
+  "n_pairs_found": 187,
+  "n_pairs_missing": 0,
+  "n_dnt_tasks": 68,
+  "n_missing_data_items": 190,
+  "generation_complete": true,
+  "truncations": [],
+  "n_reactions_with_cross_section_asset": 0,
+  "n_reactions_missing_cross_section": 54,
+  "n_reactions_with_provenance": 235,
+  "n_inferred_reactions": 0,
+  "n_imported_reactions": 0,
+  "n_literature_supported_reactions": 223,
+  "by_depth": {
+    "0": {
+      "n_reactions": 31,
+      "n_electron_reactions": 31,
+      "n_ion_neutral_reactions": 0
+    },
+    "1": {
+      "n_reactions": 167,
+      "n_electron_reactions": 21,
+      "n_ion_neutral_reactions": 62
+    },
+    "2": {
+      "n_reactions": 36,
+      "n_electron_reactions": 2,
+      "n_ion_neutral_reactions": 8
+    },
+    "3": {
+      "n_reactions": 3,
+      "n_electron_reactions": 0,
+      "n_ion_neutral_reactions": 0
+    },
+    "4": {
+      "n_reactions": 1,
+      "n_electron_reactions": 0,
+      "n_ion_neutral_reactions": 0
+    }
+  },
+  "registry": {
+    "mode": "explicit_registry",
+    "base_registry": "registry",
+    "pack": null,
+    "coverage_gap": false
+  }
+}

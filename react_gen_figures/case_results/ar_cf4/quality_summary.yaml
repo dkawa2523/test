@@ -1,0 +1,68 @@
+schema_version: 1
+case:
+  name: ar_cf4
+  gases:
+  - Ar
+  - CF4
+readiness:
+  mechanism_ready_for_review: true
+  generation_complete: true
+  dnt_ready_pairs:
+    ready: 13
+    total: 13
+    scope: pair_properties
+  dnt_complete_readiness:
+    ready: 0
+    ready_with_warnings: 13
+    missing_required_data: 0
+    no_dnt_channels: 0
+    total: 13
+    scope: pair_properties_and_channels
+  cross_section_asset_coverage_fraction: 0.0
+  provenance_coverage_fraction: 0.559322
+top_missing_actions:
+- action: import_cross_sections
+  priority: high
+  count: 7
+  subjects:
+  - e_CF4_dissociative_ionization_Fp_CF3
+  - e_CF2_dissociation_CF_F
+  - e_CF2_dissociation_C_2F
+  - e_C2F4_dissociation_2CF2
+  - e_C2F4_dissociative_ionization_C2F3p_F
+  - e_CF_dissociation_C_F
+  - e_C2F3_dissociation_CF2_CF
+- action: review_reaction_energetics
+  priority: medium
+  count: 1
+  subjects:
+  - F_m_F_detachment
+- action: manual_review
+  priority: low
+  count: 18
+  subjects:
+  - C2F3
+  - C2F4
+  - CF
+  - Arp_Ar_resonant_charge_exchange
+  - Arp_CF2_charge_transfer_CF2p
+  - Arp_CF3_charge_transfer_CF3p
+  - Arp_CF3_dissociative_charge_transfer_CF2p
+  - Arp_CF4_dissociative_charge_transfer_CF3p
+  - Arp_F_charge_transfer_Fp
+  - CF3p_Ar_charge_transfer_Arp
+warnings:
+  generation_truncated: false
+  inferred_fraction_high: false
+  cross_section_coverage_low: true
+  dnt_required_properties_missing: false
+  dnt_channel_inputs_incomplete: false
+notes:
+- Advisory summary only; generation is not blocked by this file.
+- A truncated generation is never marked mechanism-ready for review.
+- Reaction-list readiness is independent of optional DNT and calculated-result inputs.
+- Cross-section coverage counts electron reactions with registered local asset paths.
+- DNT pair-property and complete channel-input readiness are reported separately;
+  neither runs a solver.
+- DNT gaps become warnings only when outputs.dnt_inputs is explicitly enabled.
+truncations: []
