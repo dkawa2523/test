@@ -2,7 +2,7 @@
 
 [開発指針の本文に戻る](ガスケミカルエッチング_計算手法選定レポート_20261005.md)
 
-本文で選んだ課題について、実装・仮定・検証の詳細を確認するための資料集。通読を前提としない。文献調査基準日：2026年10月5日。主要実装の公式説明は2026年10月6日に再確認。
+本文で選んだ課題について、実装・仮定・検証の詳細を確認するための資料集。通読を前提としない。文献調査基準日：2026年10月5日。主要実装の公式説明は2026年10月6日に再確認。事前学習モデル・データセットの比較と追加一次資料S30〜S36を同日に更新。
 
 - [A 化学計算とスケール接続](#detail-a)
 - [B 機械学習](#detail-b)
@@ -654,19 +654,43 @@ MLIP開発の成果物は、モデル重みだけでは完結しない。参照D
 ### 一般事前学習モデルの候補
 
 
-下表の「目的用途への学習」はガスケミカルエッチングを指す。対応元素が多いことと、ガス・表面・TSを含む対象反応を学習していることは別である。各モデルの最新の採用可否は、固定した重み版とモデルカードで確認する。
+各モデルの学習データ・入力・用途・追加学習・利用条件を比較する一覧は、[本文5.3の事前学習モデル表](ガスケミカルエッチング_計算手法選定レポート_20261005.md#pretrained-models)に集約した。ここでは、重みを選んだ後に必要なデータの調査と実装の確認をまとめる。
 
-| モデル群 | 事前学習の主領域 | 用途への適合と採用条件 |
+| 選ぶモデルの系統 | 具体的な候補 | 開発で確認する点 |
 | --- | --- | --- |
-| MACE MP・MPA | 主に無機材料。MPTrjや拡張結晶データ | 構造生成や初期検討。反応障壁・気体生成物は追加検証。対象エッチ専用ではない |
-| MACE OMAT・MATPES | 無機材料。モデルごとに学習DFT条件が異なる | 表面への転用を検証。重みがASLの版は企業用途の権利確認が先 |
-| MACE OMOL・MH | 分子の電荷・スピン、または材料・分子・表面の複数領域 | 混合界面の有力候補。ただし学習headとエネルギー基準の整合が必要 |
-| UMAとfairchem | 材料、分子、触媒表面などの複数タスク | タスク、全電荷・スピン、計算レベルを合わせる。独自の重みライセンス |
-| PFPとMatlantis | 広い元素・構造を対象とする事前学習サービス | 環境準備を減らせる有償候補。目的反応の検証と追加学習・持出し条件を確認 |
-| CHGNet | Materials Projectの無機構造・緩和軌跡 | 固体構造の候補。ガス表面反応やTSに適合済みとは扱わない |
-| NequIPの公開基盤モデル | 一般材料など。専用学習用コードとは別に公開 | 2026年のモデル一覧も候補。重みごとの領域・ライセンスを評価 |
+| 多領域・表面 | UMA-S-1.2.1、MACE-MH-1 | task／head、表面・分子を評価するDFT基準、代表反応の障壁 |
+| 分子・静電相互作用 | MACE-OMOL、MACE-POLAR-1、OrbMol-v2、UMA-omol | 電荷・多重度、長距離項、周期系への適用、生成物の安定性 |
+| 無機材料 | MACE-MP/MPA/OMAT/MATPES、NequIP/Allegro-OAM、Orb-v3、CHGNet、MatGL、MatterSim | 結晶から実膜・終端・非平衡反応へ拡張するデータ |
+| 商用の多領域推論 | PFP v9／Matlantis | 計算モード、評価範囲、契約資源、更新・持出し・追加学習条件 |
 
-MACEのモデル一覧、fairchem/UMA、Matlantis、CHGNet、NequIPの公式資料に基づく分類である。[[S21](#s21)–[S24](#s24),[S28](#s28)]
+一般モデルの利用は、目的系での独立テストから開始する。対象エッチングへの専用学習済みと分類するには、対象ガス・膜・終端・反応が訓練または追加学習データに含まれる記録と、その外側での評価結果を残す。
+
+#### 学習データを調べる際の確認表
+
+| 調査項目 | 確認する実データ／モデルカード | 利用判断に反映する内容 |
+| --- | --- | --- |
+| 構造の単位 | 分子、クラスター、スラブ、周期バルク、軌跡フレーム | 原子数だけでなく、境界・密度・表面環境の一致 |
+| 化学範囲 | 元素ペア、配位、電荷、多重度、吸着・解離・脱離・TS | FやClを含むだけでなく、実反応に必要な環境を含むか |
+| 正解ラベル | 全系エネルギー／原子当たりエネルギー、F、応力、磁気モーメント | エネルギーの換算、力と応力の単位・符号、学習する出力 |
+| 参照計算 | 汎関数、+U、基底／擬ポテンシャル、分散補正、孤立原子参照 | 追加DFTと学習head／taskの整合 |
+| データ件数 | 総構造数、重複、独立系数、採用部分集合、軌跡相関 | 件数よりも反応・材料の多様性を評価 |
+| 配布・利用条件 | データ、重み、コードの各ライセンスと版 | 推論、再学習、社内配布、外部提供を別々に確認 |
+| 評価分割 | 未使用ガス系列、表面、被覆、反応、温度範囲 | 同じ軌跡の近接フレームを分けただけの過大評価を避ける |
+
+#### UMAを導入するときに固定する設定
+
+| 項目 | 採用記録に残す値 | 確認の方法 |
+| --- | --- | --- |
+| 重み | `uma-s-1p2p1`等の正確な識別子、チェックサム | 公式モデルカードと実ファイルを照合 |
+| 実行環境 | fairchem-core、PyTorch、CUDA、GPU、精度・推論設定 | 小さな固定構造でE/Fを記録し再現性を確認 |
+| task | `oc20`／`oc22`／`oc25`／`omat`／`omol`／`omc`／`odac` | 1.2系列の対応と学習DFTを確認。本文のタスク表を参照 |
+| 電子状態 | 全電荷、多重度、各taskの入力規約 | `omol`は物理的な全電荷・多重度を明示。その他のtaskの規約を別管理 |
+| エネルギー差 | 反応前後の構造群、全元素収支、同一基準 | 吸着・解離・脱離を一つのtask／参照DFTで評価 |
+| 目的データ | 自社反応の学習集合と固定テスト、データ版 | ゼロショット→追加学習→新規学習を同じテストで比較 |
+
+UMAの旧1.0には既知のサイズ拡張性の問題があり、現行の推奨から外れる。公式変更履歴では旧1.0に対応するfairchem-coreの上限も案内している。新規開発は現行推奨モデルを使い、過去の結果の再現には当時の重み・環境を保存する。[S30](#s30)
+
+OrbMol-v2の内部電荷は、エネルギー・力に対する学習から得られる潜在量として読む。電荷移動の定量的な説明へ利用する場合は、採用したDFTの電荷解析と別に比較する。MatGLは版更新でグラフ／応力規約と重みの対応が変わるため、旧重みを新しい実装へ移すときにE/F/応力の一致を確認する。[S32](#s32)、[S34](#s34)
 
 #### エネルギーを混ぜる落とし穴
 
@@ -1078,7 +1102,7 @@ ViennaPSは古い資料のMIT表記を最新版の条件として転用しない
 | --- | --- | --- |
 | MACE本体 [[S21](#s21)] | MITの公開コード | Python・GPU環境で中程度。学習済み重みの条件は別 |
 | MACE MP・MPA [[S21](#s21)] | モデル一覧ではMITの版がある | 汎用事前学習。対象反応での検証と、必要に応じた追加学習 |
-| MACE OMAT・MATPES・OMOL・MH [[S21](#s21)] | 一覧ではASLの版。学術非商用を前提。企業利用は別権利の確認 | コード本体がMITでも重みに自動で適用しない |
+| MACE OMAT・MATPES・OMOL・MH・POLAR [[S21](#s21),[S31](#s31)] | 一覧ではASLの版。学術非商用を前提。企業利用は別権利の確認 | コード本体がMITでも重みに自動で適用しない |
 | fairchemとUMA [[S22](#s22)] | コードはMIT。UMA重みはFAIR Chemistry License | 無償取得と条件同意。独自ライセンスをMITや一律の非商用制限と混同しない |
 | MatlantisとPFP [[S23](#s23)] | 有償SaaS。契約・見積りによる | 環境面は比較的容易。重み持出し・追加学習・データ取扱いは契約確認 |
 | NequIP・Allegro [[S24](#s24)] | 公開コード。主要実装はMIT | 中〜高難度。PyTorchとLAMMPS接続版を揃える。公開重みは個別条件 |
@@ -1086,6 +1110,11 @@ ViennaPSは古い資料のMIT表記を最新版の条件として転用しない
 | GPUMDとNEP [[S26](#s26)] | 無償。GPLv3の公開実装 | 中。GPU、学習・実行形式を揃える。対象重みは別 |
 | GAP・ACE系 [[S27](#s27)] | 実装ごとに異なる。ASLを含むため採用実装ごとに企業利用条件を確認 | 専用学習の候補。権利・LAMMPS接続を個別確認 |
 | CHGNet [[S28](#s28)] | 公開コード。BSD系の条件 | Python中心で中程度。結晶用の事前学習を対象化学へ検証 |
+| Orb／OrbMol [[S32](#s32)] | 公式READMEではモデルをApache-2.0で提供 | PyTorch・ASE、追加学習。保存力型、近傍数、電荷・スピン、重み版を固定 |
+| NequIP／Allegro OAM-L重み [[S35](#s35)] | 対象モデルカードはCC-BY-4.0、本体MIT | 追加学習可能。材料データ起点なので反応データの補充とMD検証を計画 |
+| MatterSim [[S33](#s33)] | MITの公開実装とv1重み | PyTorch、ASE、追加学習。主領域はバルク材料 |
+| MatGL [[S34](#s34)] | BSD系のコード、重みは個別の配布条件 | PyTorchを基本とする。JAX推論は対応モデルの範囲で比較 |
+| scikit-learn／Optuna [[S36](#s36)] | BSD／MITの公開コード | 目的データから性能予測／評価関数から探索。導入は比較的容易 |
 | BoTorch [[S29](#s29)] | 無償。MIT | Python・PyTorch。ガス探索用のラベルと最適化設計が必要 |
 
 ASLの非商用制限は公式ライセンス本文による。企業研究を学術研究と同一視しない。一方、UMAの独自ライセンスには利用・改変等の権利と条件があるため、名称だけで商用禁止と断定しない。[[S21](#s21),[S22](#s22)]
@@ -1673,3 +1702,87 @@ Bayesian optimizationの公式コードと説明。MITの公開実装。
 
 - [https://github.com/meta-pytorch/botorch](https://github.com/meta-pytorch/botorch)
 - [https://botorch.org/](https://botorch.org/)
+
+
+<a id="s30"></a>
+
+### S30 UMAの現行モデル・タスク・データセット
+
+2026年10月6日確認。現行推奨識別子、1.2系列の7タスク・約520M計算への拡張、モデル取得と利用条件を確認。公開説明に旧5タスクの記述が残るため、モデルカード・変更履歴・現行のタスク表を照合した。
+
+- [FAIRChem公式README：推奨モデルと利用例](https://github.com/facebookresearch/fairchem)
+- [UMAモデル概説：各taskのDFT条件](https://github.com/facebookresearch/fairchem/blob/main/docs/core/uma.md)
+- [UMA変更履歴：1.2の学習データ拡張と旧版の互換性](https://github.com/facebookresearch/fairchem/blob/main/docs/core/uma_changelog.md)
+- [UMA公式モデルカード・FAIR Chemistry License](https://huggingface.co/facebook/UMA)
+- [UMA原著：多領域モデルとMoLE](https://arxiv.org/abs/2506.23971)
+- [OMol25原著：100M超・83元素・電荷とスピン・反応構造](https://arxiv.org/abs/2505.08762)
+- [OMol25配布ページ](https://huggingface.co/facebook/OMol25)
+- [OMat24公式データセット案内](https://facebookresearch.github.io/fairchem/omat24/)
+- [OC25原著：明示溶媒を含む固液界面](https://arxiv.org/abs/2509.17862)
+- [FAIR Chemistry論文一覧：OMol／OMat／OMC／OPoly等](https://facebookresearch.github.io/fairchem/fair-chemistry-papers/)
+
+UMAモデルカードは商用・非商用の利用を案内する。重み取得時の同意、利用規約、再配布条件は採用版に添付された文書で管理する。DFTデータの条件はモデル重みと別に確認する。
+
+<a id="s31"></a>
+
+### S31 MACE-MH-1・MACE-POLAR-1と追加学習
+
+2026年10月6日確認。MHは複数データのhead別学習、POLARはOMol25で学習した長距離静電相互作用を含むモデル。本文では分子・多領域の比較候補に置き、対象の企業利用権を採用条件とした。
+
+- [公式事前学習モデル一覧](https://github.com/ACEsuit/mace-foundations)
+- [公式リリース：MHの学習集合とPOLARの構成](https://github.com/ACEsuit/mace-foundations/releases)
+- [MACEコードのリリース履歴：モデル対応・追加学習](https://github.com/ACEsuit/mace/releases)
+- [MACE-POLAR-1原著](https://arxiv.org/abs/2602.19411)
+- [Academic Software Licence本文](https://github.com/gabor1/ASL/blob/main/ASL.md)
+
+<a id="s32"></a>
+
+### S32 Orb-v3・OrbMol-v2
+
+2026年10月6日確認。2026年5月のOrbMol-v2、OMol25＋OPoly26、長距離電荷項、周期／非周期の実装、Orb-v3の保存力型／直接力型と学習集合を確認。公式READMEはOrbモデルをApache-2.0で提供すると記載する。
+
+- [公式README：更新履歴、導入、ライセンス](https://github.com/orbital-materials/orb-models)
+- [MODELS：学習データ・アーキテクチャ・近傍設定](https://github.com/orbital-materials/orb-models/blob/main/MODELS.md)
+- [公式追加学習手順](https://github.com/orbital-materials/orb-models/blob/main/FINETUNING_GUIDE.md)
+- [Orb-v3原著](https://arxiv.org/abs/2504.06231)
+
+<a id="s33"></a>
+
+### S33 MatterSim
+
+2026年10月6日確認。公開v1の1M／5M、PyTorch／ASE、追加学習、バルク材料としての適用領域を確認。モデルの学習で用いた温度・圧力範囲を、任意のエッチング反応の精度保証へ置き換えない。
+
+- [公式コード・導入・追加学習](https://github.com/microsoft/mattersim)
+- [MatterSim原著：能動学習と参照データ生成](https://arxiv.org/abs/2405.04967)
+
+<a id="s34"></a>
+
+### S34 MatGL・MatPES
+
+2026年10月6日確認。MatGLは現在materialyzeaiのリポジトリで公開されている。MatPES学習モデル、PyTorch学習、対応モデルに限ったJAX推論、更新時の規約・重み整合を確認。CHGNet旧MPTrj重みと、MatGL側のMatPES重みを分けて選ぶ。
+
+- [MatGL公式コード](https://github.com/materialyzeai/matgl)
+- [MatGL公式案内](https://matgl.ai/)
+- [MatPES公式サイト](https://matpes.ai/)
+- [CHGNet公式：モデル版とMatPESモデルの案内](https://github.com/CederGroupHub/chgnet)
+
+<a id="s35"></a>
+
+### S35 NequIP・AllegroのOAM事前学習重み
+
+2026年10月6日確認。NequIP-OAMは2026年2月25日、Allegro-OAM-Lは2025年8月28日の公式モデルカードを参照。LモデルはいずれもOMat24で事前学習、sAlexとMPTrjで追加学習した材料モデルで、重みはCC-BY-4.0。配布形式、コンパイル先、反発項などはモデルごとに固定する。
+
+- [公開モデル一覧](https://www.nequip.net/models)
+- [NequIP-OAM-L v0.1：学習データと利用条件](https://www.nequip.net/models/mir-group/NequIP-OAM-L:0.1)
+- [Allegro-OAM-L v0.1：学習データと利用条件](https://www.nequip.net/models/mir-group/Allegro-OAM-L:0.1)
+
+登録可能な元素の一覧よりも、実際の学習データにある元素組合せと化学環境を優先して判定する。目的エッチングへの適用では分子・表面・TSの追加検証と、必要に応じた追加学習を行う。
+
+<a id="s36"></a>
+
+### S36 性能予測と評価関数の探索
+
+2026年10月6日確認。scikit-learnは工程データの回帰・分類、Optunaは評価関数の探索として使用する。MLIPの事前学習モデルと分けて採用する。
+
+- [scikit-learn公式：教師あり学習](https://scikit-learn.org/stable/supervised_learning.html)
+- [Optuna公式ドキュメント](https://optuna.readthedocs.io/en/stable/)
