@@ -6,11 +6,13 @@
 
 ## ダウンロード
 
-- [編集用 PowerPoint](react_gen_editable_figures_ja.pptx)
+- [編集用 PowerPoint をダウンロード](https://github.com/dkawa2523/test/raw/refs/heads/main/react_gen_figures/react_gen_editable_figures_ja.pptx)
 - [閲覧用 PDF](react_gen_editable_figures_ja.pdf)
 - [PowerPoint・PDF・全20枚のPNG・実行結果のZIP](react_gen_PowerPoint.zip)
 
 PPTX がコードエディターで開く場合は、ZIP を保存・展開し、PowerPoint の「開く」から PPTX を選択してください。
+
+2026-10-07：PowerPointの互換性修正。レイアウトIDの重複、ノート情報の並び順、不要な結合用データを修正しました。全20枚の内容・表示・編集可能な図形を保持しています。ZIP内のPPTXも差し替えました。
 
 ## 編集できる要素
 
